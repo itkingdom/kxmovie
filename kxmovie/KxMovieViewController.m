@@ -71,7 +71,7 @@ enum {
 static NSMutableDictionary * gHistory;
 
 #define DEFAULT_DECODE_DURATION   0.1
-#define NETWORK_BUFFERED_DURATION 2.0
+#define NETWORK_BUFFERED_DURATION 3.0
 
 @interface KxMovieViewController () {
 
@@ -119,6 +119,8 @@ static NSMutableDictionary * gHistory;
     CGFloat             _decodeDuration;
     CGFloat             _bufferedDuration;
     CGFloat             _minBufferedDuration;
+    
+    BOOL                _buffered;
 }
 
 @property (readwrite) BOOL playing;
@@ -415,9 +417,7 @@ static NSMutableDictionary * gHistory;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     
     [super viewWillDisappear:animated];
-    
-    [_activityIndicatorView stopAnimating];
-    
+        
     if (_decoder) {
         
         [self pause];
@@ -435,6 +435,8 @@ static NSMutableDictionary * gHistory;
     if (_hiddenHUD)
         [[UIApplication sharedApplication] setIdleTimerDisabled:NO];
     
+    [_activityIndicatorView stopAnimating];
+    _buffered = NO;
 }
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation
@@ -727,7 +729,11 @@ static NSMutableDictionary * gHistory;
 {
     //fillSignalF(outData,numFrames,numChannels);
     //return;
-        
+    if (_buffered) {
+        memset(outData, 0, numFrames * numChannels * sizeof(float));
+        return;
+    }
+    
     @autoreleasepool {
         
         while (numFrames > 0) {
@@ -903,20 +909,36 @@ static NSMutableDictionary * gHistory;
     if (!self.playing)
         return;
     
-    CGFloat interval = [self presentFrame];
+    if (_buffered && _bufferedDuration > _minBufferedDuration) {
+    
+        _buffered = NO;
+        [_activityIndicatorView stopAnimating];
+        NSLog(@"stop buffering");        
+    }
+    
+    CGFloat interval = 0;
+    if (!_buffered)
+        interval = [self presentFrame];
     
     const NSUInteger leftFrames =
         (_decoder.validVideo ? _videoFrames.count : 0) +
         (_decoder.validAudio ? _audioFrames.count : 0);
     
     if (0 == leftFrames) {
-    
+        
         if (_decoder.isEOF) {
             
             [self pause];
             [self updateHUD];
             return;
-        } 
+        }
+        
+        if (_decoder.isNetwork && !_buffered) {
+            
+            _buffered = YES;
+            [_activityIndicatorView startAnimating];
+            NSLog(@"start buffering");
+        }
     }
     
     if (_bufferedDuration < _minBufferedDuration) {
